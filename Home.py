@@ -1,19 +1,19 @@
 import streamlit as st
 
-st.set_page_config(page_title="IBM WatsonX Chat", layout="wide")
+st.set_page_config(page_title="IBM watsonx Chat", layout="wide")
 
-st.title("🤖 Welcome to IBM WatsonX Chat")
+st.title("🤖 Welcome to IBM watsonx Chat")
 
 st.markdown("""
-### 👋 Welcome to the IBM WatsonX Chat Application!
+### 👋 Welcome to the IBM watsonx Chat Application!
 
 This application allows you to:
-- 💬 Chat with IBM WatsonX AI models
+- 💬 Chat with IBM watsonx AI models
 - 📚 Manage and query your documents
-- 🔑 Configure your IBM WatsonX credentials
+- 🔑 Configure your IBM watsonx credentials
 
 ### Getting Started:
-1. First, go to the **Credentials** page to set up your IBM WatsonX API credentials
+1. First, go to the **Credentials** page to set up your IBM watsonx API credentials
 2. Visit the **Document Management** page to upload and manage your documents
 3. Use the **Chat** page to interact with the AI and your documents
 
@@ -23,7 +23,7 @@ This application allows you to:
 - Your settings and documents are preserved between sessions
 
 ### Need Help?
-- Check IBM WatsonX documentation for API details
+- Check IBM watsonx documentation for API details
 - Use the Document Management page to see your uploaded files
 - Enable RAG in the Chat page to query your documents
 """)
@@ -35,13 +35,13 @@ col1, col2, col3 = st.columns(3)
 
 with col1:
     st.markdown("#### 📖 Documentation")
-    st.markdown("- [IBM WatsonX Documentation](https://www.ibm.com/docs/en/watsonx-as-a-service)")
+    st.markdown("- [IBM watsonx Documentation](https://www.ibm.com/docs/en/watsonx-as-a-service)")
     st.markdown("- [API Reference](https://cloud.ibm.com/apidocs/watsonx-ai)")
 
 with col2:
     st.markdown("#### 🛠️ Tools")
     st.markdown("- [IBM Cloud Console](https://cloud.ibm.com)")
-    st.markdown("- [WatsonX.ai Hub](https://www.ibm.com/products/watsonx-ai)")
+    st.markdown("- [watsonx.ai Hub](https://www.ibm.com/products/watsonx-ai)")
 
 with col3:
     st.markdown("#### 💡 Resources")

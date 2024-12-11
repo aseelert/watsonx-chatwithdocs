@@ -70,12 +70,12 @@ streamlit run Home.py
 ## File Structure
 
 ```
-watsonx-chat/
+watsonx-chatwithdocs/
 ├── Home.py                 # Main application entry
 ├── pages/
-│   ├── 1_💬_Chat.py       # Chat interface
-│   ├── 2_📚_Document_Management.py  # Document handling
-│   └── 3_🔑_Credentials.py # Credential management
+│   ├── 01_Chat.py         # Chat interface
+│   ├── 02_Documents.py    # Document handling
+│   └── 03_Credentials.py  # Credential management
 ├── utils/
 │   ├── watsonx_helpers.py  # watsonx.ai integration
 │   ├── chroma_helpers.py   # Vector database management
