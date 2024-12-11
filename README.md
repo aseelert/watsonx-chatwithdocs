@@ -53,6 +53,15 @@ streamlit run Home.py
 
 ## Usage
 
+**Chat with watsonx.ai**
+![alt text](pictures/image.png)
+
+**Simple chat interface with RAG enabled.**
+![alt text](pictures/image-1.png)
+
+**use Document Knowledge**
+![alt text](pictures/image-2.png)
+
 ### Chat Interface
 - Navigate to the "Chat" page
 - Adjust model parameters in the sidebar:
