@@ -11,15 +11,187 @@ pip install pypdf
 
 import streamlit as st
 from ibm_watsonx_ai import Credentials
-from ibm_watsonx_ai.foundation_models import Model
-from ibm_watsonx_ai.foundation_models.utils.enums import ModelTypes
+from ibm_watsonx_ai.foundation_models import ModelInference
+from ibm_watsonx_ai.foundation_models.utils.enums import DecodingMethods
 import sqlite3
 from langchain_core.prompts import PromptTemplate
 import requests
 import json
+from langchain_community.document_loaders import (
+    PyPDFLoader,
+    CSVLoader,
+    TextLoader,
+    Docx2txtLoader,
+    UnstructuredFileLoader
+)
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import Chroma
+from langchain_community.embeddings import HuggingFaceEmbeddings
+import tempfile
+import os
+import time  # Add this to the imports section
+
+# Move these functions to the top, after imports but before any usage
+def initialize_chroma():
+    """Initialize ChromaDB with HuggingFace embeddings"""
+    # Create directory if it doesn't exist
+    persist_directory = "./chroma_db"
+    os.makedirs(persist_directory, exist_ok=True)
+
+    # Initialize embeddings with explicit cache directory
+    cache_dir = "./models_cache"
+    os.makedirs(cache_dir, exist_ok=True)
+
+    embeddings = HuggingFaceEmbeddings(
+        model_name="all-MiniLM-L6-v2",
+        cache_folder=cache_dir,
+        model_kwargs={'device': 'cpu'}
+    )
+
+    try:
+        vectorstore = Chroma(
+            persist_directory=persist_directory,
+            embedding_function=embeddings
+        )
+        vectorstore.persist()  # Make sure to persist after initialization
+        return vectorstore
+    except Exception as e:
+        st.error(f"Error initializing ChromaDB: {str(e)}")
+        return None
+
+def get_document_loader(file_path, file_type):
+    """Return appropriate loader based on file type"""
+    if file_type == "pdf":
+        return PyPDFLoader(file_path)
+    elif file_type == "csv":
+        return CSVLoader(file_path)
+    elif file_type == "txt":
+        return TextLoader(file_path)
+    elif file_type == "docx":
+        return Docx2txtLoader(file_path)
+    else:
+        return UnstructuredFileLoader(file_path)
+
+def calculate_optimal_chunk_size(file_size_bytes, content_length):
+    """Calculate optimal chunk size based on file size and content length"""
+    # Convert bytes to MB
+    file_size_mb = file_size_bytes / (1024 * 1024)
+
+    # Base chunk size for small files (< 1MB)
+    if file_size_mb < 1:
+        base_chunk_size = 1000
+    # Medium files (1MB - 5MB)
+    elif file_size_mb < 5:
+        base_chunk_size = 1500
+    # Large files (5MB - 10MB)
+    elif file_size_mb < 10:
+        base_chunk_size = 2000
+    # Very large files (> 10MB)
+    else:
+        base_chunk_size = 2500
+
+    # Adjust based on content length
+    content_factor = content_length / 1000  # per 1000 characters
+    adjusted_chunk_size = int(base_chunk_size * (1 + (content_factor / 100)))
+
+    # Set reasonable limits
+    min_chunk_size = 500
+    max_chunk_size = 3000
+
+    return max(min_chunk_size, min(adjusted_chunk_size, max_chunk_size))
+
+def process_document(uploaded_file):
+    """Process uploaded document and return chunks with metadata"""
+    try:
+        file_extension = uploaded_file.name.split('.')[-1].lower()
+        file_name = uploaded_file.name
+        file_size = len(uploaded_file.getvalue())
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{file_extension}') as tmp_file:
+            tmp_file.write(uploaded_file.getbuffer())
+            tmp_file.flush()
+            file_path = tmp_file.name
+
+        # Load document
+        loader = get_document_loader(file_path, file_extension)
+        documents = loader.load()
+
+        # Calculate total content length
+        total_content_length = sum(len(doc.page_content) for doc in documents)
+
+        # Calculate optimal chunk size
+        chunk_size = calculate_optimal_chunk_size(file_size, total_content_length)
+        overlap_size = int(chunk_size * 0.1)  # 10% overlap
+
+        # Show chunking info in the UI
+        st.info(f"""Document Statistics:
+        - File Size: {file_size / (1024 * 1024):.2f} MB
+        - Content Length: {total_content_length:,} characters
+        - Calculated Chunk Size: {chunk_size:,} characters
+        - Chunk Overlap: {overlap_size:,} characters""")
+
+        # Split text with calculated chunk size
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=overlap_size,
+            length_function=len,
+            separators=["\n\n", "\n", " ", ""]
+        )
+        chunks = text_splitter.split_documents(documents)
+
+        # Add metadata to chunks
+        for i, chunk in enumerate(chunks):
+            chunk.metadata.update({
+                "source": file_name,
+                "chunk_id": i,
+                "total_chunks": len(chunks),
+                "chunk_size": chunk_size,
+                "file_size_mb": file_size / (1024 * 1024),
+                "content_length": total_content_length
+            })
+
+        return chunks
+    except Exception as e:
+        st.error(f"Error processing file: {str(e)}")
+        return None
+    finally:
+        if 'file_path' in locals():
+            try:
+                os.unlink(file_path)
+            except Exception as e:
+                st.warning(f"Could not delete temporary file: {str(e)}")
+
+def get_document_summary(vectorstore):
+    """Get summary of documents stored in ChromaDB"""
+    try:
+        all_docs = vectorstore.get()
+        docs_summary = {}
+
+        # Group by source document
+        for doc_id, metadata in zip(all_docs.get('ids', []), all_docs.get('metadatas', [])):
+            source = metadata.get('source', 'Unknown')
+            if source not in docs_summary:
+                docs_summary[source] = {
+                    'chunk_count': 0,
+                    'ids': []
+                }
+            docs_summary[source]['chunk_count'] += 1
+            docs_summary[source]['ids'].append(doc_id)
+
+        return docs_summary
+    except Exception as e:
+        st.error(f"Error getting document summary: {str(e)}")
+        return {}
 
 # Set page config for a cleaner look
 st.set_page_config(page_title="IBM WatsonX Chat", layout="wide")
+
+# Initialize session state variables
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+if "use_rag" not in st.session_state:
+    st.session_state.use_rag = False
 
 # Database setup
 conn = sqlite3.connect('apikeys.db')
@@ -221,59 +393,245 @@ if existing_credentials:
             top_p = st.slider("Top P", 0.0, 1.0, 1.0, 0.1)
             presence_penalty = st.slider("Presence Penalty", 0.0, 2.0, 0.0, 0.1)
 
-    # Chat interface
-    st.divider()
+# Create tabs for Chat and Document Management
+tab1, tab2 = st.tabs(["Chat", "Document Management"])
 
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
+with tab2:
+    st.title("📚 Document Management")
+
+    # Initialize ChromaDB
+    vectorstore = initialize_chroma()
+
+    # Show existing documents
+    if vectorstore is not None:
+        try:
+            docs_summary = get_document_summary(vectorstore)
+
+            if docs_summary:
+                st.subheader(f"📑 Existing Documents ({len(docs_summary)} documents)")
+
+                # Select all checkbox
+                select_all = st.checkbox("Select All Documents")
+
+                # Document list with individual checkboxes
+                selected_docs = {}
+                for doc_name, info in docs_summary.items():
+                    col1, col2 = st.columns([0.1, 0.9])
+                    with col1:
+                        is_selected = st.checkbox(
+                            label=f"Select {doc_name}",
+                            key=f"select_{doc_name}",
+                            value=select_all,
+                            label_visibility="collapsed"
+                        )
+                        if is_selected:
+                            selected_docs[doc_name] = info['ids']
+
+                    with col2:
+                        with st.expander(f"📄 {doc_name}"):
+                            st.text(f"Number of chunks: {info['chunk_count']}")
+
+                # Delete buttons
+                col1, col2 = st.columns(2)
+                with col1:
+                    if selected_docs and st.button("🗑️ Delete Selected", type="primary"):
+                        try:
+                            for doc_name, ids in selected_docs.items():
+                                vectorstore.delete(ids=ids)
+                                st.success(f"Successfully deleted {doc_name}")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error deleting documents: {str(e)}")
+
+                with col2:
+                    if st.button("🗑️ Delete All Documents", type="secondary"):
+                        try:
+                            all_ids = [id for info in docs_summary.values() for id in info['ids']]
+                            vectorstore.delete(ids=all_ids)
+                            st.success("Successfully deleted all documents")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error deleting all documents: {str(e)}")
+            else:
+                st.info("No documents stored in the database.")
+
+        except Exception as e:
+            st.error(f"Error accessing documents: {str(e)}")
+
+    # File uploader
+    st.divider()
+    st.subheader("📤 Upload New Documents")
+    uploaded_files = st.file_uploader(
+        "Upload your documents",
+        type=["pdf", "csv", "txt", "docx"],
+        accept_multiple_files=True
+    )
+
+    if uploaded_files:
+        # Process files first to show statistics
+        files_to_process = []
+        total_chunks = 0
+
+        # Get existing documents
+        existing_docs = get_document_summary(vectorstore) if vectorstore else {}
+
+        st.subheader("📊 Document Analysis")
+        for uploaded_file in uploaded_files:
+            with st.expander(f"Analyzing {uploaded_file.name}"):
+                try:
+                    # Check if document already exists
+                    if uploaded_file.name in existing_docs:
+                        st.warning(f"Document '{uploaded_file.name}' already exists and will be replaced.")
+
+                    # Process document to get chunk information
+                    chunks = process_document(uploaded_file)
+                    if chunks:
+                        files_to_process.append({
+                            'file': uploaded_file,
+                            'chunks': chunks,
+                            'chunk_count': len(chunks),
+                            'replace_ids': existing_docs.get(uploaded_file.name, {}).get('ids', [])
+                        })
+                        total_chunks += len(chunks)
+                except Exception as e:
+                    st.error(f"Error analyzing {uploaded_file.name}: {str(e)}")
+
+        if files_to_process:
+            st.info(f"""
+            📝 Summary:
+            - Total files to process: {len(files_to_process)}
+            - Total chunks to create: {total_chunks}
+            - Files to be replaced: {sum(1 for f in files_to_process if f['replace_ids'])}
+            """)
+
+            # Add confirmation button
+            if st.button("✅ Confirm and Process Documents", type="primary"):
+                all_files_processed = True
+
+                progress_bar = st.progress(0)
+                for idx, file_info in enumerate(files_to_process):
+                    with st.expander(f"Processing {file_info['file'].name}"):
+                        try:
+                            # Delete existing document if it exists
+                            if file_info['replace_ids']:
+                                vectorstore.delete(ids=file_info['replace_ids'])
+                                st.info(f"Deleted existing version of {file_info['file'].name}")
+
+                            # Store new version in ChromaDB
+                            vectorstore.add_documents(file_info['chunks'])
+                            vectorstore.persist()
+                            st.success(f"Successfully processed and stored {file_info['file'].name}")
+                        except Exception as e:
+                            st.error(f"Error processing {file_info['file'].name}: {str(e)}")
+                            all_files_processed = False
+
+                    # Update progress bar
+                    progress_bar.progress((idx + 1) / len(files_to_process))
+
+                if all_files_processed:
+                    st.success("All documents processed successfully. Refreshing page...")
+                    time.sleep(1)
+                    st.rerun()
+
+with tab1:
+    # Add RAG toggle
+    st.sidebar.divider()
+    st.sidebar.subheader("RAG Settings")
+    use_rag = st.sidebar.toggle(
+        "Use RAG (Query Documents)",
+        value=st.session_state.use_rag,
+        key="rag_toggle"
+    )
+    st.session_state.use_rag = use_rag
 
     # Display chat messages
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    # Chat input
-    if prompt := st.chat_input("What would you like to know?"):
+    # Single chat input for both RAG and non-RAG modes
+    if prompt := st.chat_input("What would you like to know?", key="chat_input"):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        # Initialize chat with parameters
         with st.chat_message("assistant"):
             try:
-                # Initialize credentials
+                # Initialize credentials and model
                 credentials = Credentials(
                     api_key=existing_api_key,
                     url=region_url
                 )
 
-                # Initialize WatsonX model with credentials object
-                model = Model(
-                    model_id=selected_model,
-                    credentials=credentials,
-                    project_id=existing_project_id,
-                    params={
-                        "temperature": temperature,
-                        "max_new_tokens": max_tokens,
-                        "top_p": top_p,
-                        "frequency_penalty": frequency_penalty,
-                        "presence_penalty": presence_penalty
-                    }
-                )
+                # If RAG is enabled, get relevant documents
+                if use_rag:
+                    vectorstore = initialize_chroma()
+                    relevant_docs = vectorstore.similarity_search(prompt, k=3)
+                    context = "\n".join([doc.page_content for doc in relevant_docs])
 
-                # Format the prompt
-                formatted_prompt = f"""System: You are a helpful assistant.
+                    # Format prompt with context
+                    formatted_prompt = f"""System: You are a helpful assistant. Use the following context to answer the question.
+Context: {context}
+
+User: {prompt}
+Assistant:"""
+                else:
+                    # Regular prompt without context
+                    formatted_prompt = f"""System: You are a helpful assistant.
 User: {prompt}
 Assistant:"""
 
-                # Generate response
-                response = model.generate_text(formatted_prompt)
+                # Initialize model and generate response
+                model = ModelInference(
+                    model_id=selected_model,
+                    credentials=credentials,
+                    project_id=existing_project_id
+                )
+
+                # Set parameters after initialization
+                model.params = {
+                    "temperature": temperature,
+                    "max_new_tokens": max_tokens,
+                    "top_p": top_p,
+                    "decoding_method": DecodingMethods.GREEDY,
+                    "repetition_penalty": 1.0,
+                    "stop_sequences": ["User:", "System:", "Assistant:"]
+                }
+
+                response = model.generate(formatted_prompt)
+
+                # Extract the generated text and token counts from the response
+                if isinstance(response, dict) and 'results' in response:
+                    response_text = response['results'][0]['generated_text']
+                    generated_tokens = response['results'][0].get('generated_token_count', 0)
+                    input_tokens = response['results'][0].get('input_token_count', 0)
+                else:
+                    response_text = str(response)
+                    generated_tokens = 0
+                    input_tokens = 0
 
                 # Display response
-                st.markdown(response)
+                st.markdown(response_text)
 
-                # Save to chat history
-                st.session_state.messages.append({"role": "assistant", "content": response})
+                # Display token counts
+                st.caption(f"📊 Tokens - Generated: {generated_tokens}, Input: {input_tokens}")
+
+                # Save to chat history (including token counts)
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": f"{response_text}\n\n_📊 Tokens - Generated: {generated_tokens}, Input: {input_tokens}_"
+                })
+
+                # Optionally display warnings if they exist
+                if isinstance(response, dict) and 'system' in response and 'warnings' in response['system']:
+                    relevant_warnings = [
+                        warning for warning in response['system']['warnings']
+                        if 'max_new_tokens' not in warning.get('message', '')
+                    ]
+                    if relevant_warnings:  # Only show expander if there are relevant warnings
+                        with st.expander("System Warnings"):
+                            for warning in relevant_warnings:
+                                st.warning(warning['message'])
 
             except Exception as e:
                 error_msg = str(e)
@@ -296,9 +654,6 @@ Assistant:"""
                     "role": "assistant",
                     "content": f"_Sorry, I encountered an error: {error_msg}_"
                 })
-
-else:
-    st.info("Please enter your credentials in the sidebar to start chatting.")
 
 
 
