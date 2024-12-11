@@ -38,6 +38,7 @@ apikeys.db
 chroma_db/
 models_cache/
 *.log
+apikeys.db
 
 # OS specific
 .DS_Store
