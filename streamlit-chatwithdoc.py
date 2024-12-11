@@ -1,26 +1,21 @@
 """
 Required installations:
 pip install streamlit
-pip install langchain
-pip install langchain-ibm
-pip install ibm-watson-machine-learning
+pip install ibm-watsonx-ai
 pip install chromadb
 pip install requests
 
 Optional for PDF handling (if implementing later):
 pip install pypdf
-pip install langchain-community
 """
 
 import streamlit as st
-from langchain_ibm import ChatWatsonx
+from ibm_watsonx_ai import Credentials
+from ibm_watsonx_ai.foundation_models import Model
+from ibm_watsonx_ai.foundation_models.utils.enums import ModelTypes
 import sqlite3
-#from langchain_core.vectorstores import Chroma
 from langchain_core.prompts import PromptTemplate
-from langchain_core.messages import HumanMessage, SystemMessage
 import requests
-from langchain_core.callbacks import StreamingStdOutCallbackHandler
-from langchain.callbacks.streamlit import StreamlitCallbackHandler
 import json
 
 # Set page config for a cleaner look
@@ -244,55 +239,41 @@ if existing_credentials:
             st.markdown(prompt)
 
         # Initialize chat with parameters
-        chat = ChatWatsonx(
-            model_id=selected_model,
-            url=region_url,  # Use the selected region URL
-            project_id=existing_project_id,
-            apikey=existing_api_key,
-            params={
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "top_p": top_p,
-                "frequency_penalty": frequency_penalty,
-                "presence_penalty": presence_penalty
-            }
-        )
-
-        # Create message list for the chat
-        messages = [
-            SystemMessage(content="You are a helpful assistant."),
-            HumanMessage(content=prompt)
-        ]
-
         with st.chat_message("assistant"):
             try:
-                # Initialize placeholder for streaming
-                message_placeholder = st.empty()
+                # Initialize credentials
+                credentials = Credentials(
+                    api_key=existing_api_key,
+                    url=region_url
+                )
 
-                # Initialize chat with streaming
-                chat = ChatWatsonx(
+                # Initialize WatsonX model with credentials object
+                model = Model(
                     model_id=selected_model,
-                    url=region_url,
+                    credentials=credentials,
                     project_id=existing_project_id,
-                    apikey=existing_api_key,
-                    streaming=False,
                     params={
                         "temperature": temperature,
-                        "max_tokens": max_tokens,
+                        "max_new_tokens": max_tokens,
                         "top_p": top_p,
                         "frequency_penalty": frequency_penalty,
                         "presence_penalty": presence_penalty
                     }
                 )
 
-                # Stream the response
-                response = chat.invoke(messages)
+                # Format the prompt
+                formatted_prompt = f"""System: You are a helpful assistant.
+User: {prompt}
+Assistant:"""
 
-                # Display final response
-                st.markdown(response.content)
+                # Generate response
+                response = model.generate_text(formatted_prompt)
+
+                # Display response
+                st.markdown(response)
 
                 # Save to chat history
-                st.session_state.messages.append({"role": "assistant", "content": response.content})
+                st.session_state.messages.append({"role": "assistant", "content": response})
 
             except Exception as e:
                 error_msg = str(e)
