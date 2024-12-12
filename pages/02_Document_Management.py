@@ -125,7 +125,7 @@ if uploaded_files:
 
                         # Store new version in ChromaDB
                         chroma_manager.vectorstore.add_documents(file_info['chunks'])
-                        chroma_manager.vectorstore.persist()
+                        #chroma_manager.vectorstore.persist()
                         st.success(f"Successfully processed and stored {file_info['file'].name}")
                     except Exception as e:
                         st.error(f"Error processing {file_info['file'].name}: {str(e)}")
