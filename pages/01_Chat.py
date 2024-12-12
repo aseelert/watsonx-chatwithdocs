@@ -117,13 +117,13 @@ if prompt := st.chat_input("What would you like to know?", key="chat_input"):
             if use_rag and chroma_manager.vectorstore:
                 relevant_docs = chroma_manager.vectorstore.similarity_search(prompt, k=3)
                 context = "\n".join([doc.page_content for doc in relevant_docs])
-                formatted_prompt = f"""System: You are a helpful assistant. Use the following context to answer the question.
+                formatted_prompt = f"""System: You are a helpful assistant. Use the following context to answer the question. Do it in a way that is easy to understand and follow. If SQL is needed, provide the SQL code. If code is needed, provide the code in markdown format.
 Context: {context}
 
 User: {prompt}
 Assistant:"""
             else:
-                formatted_prompt = f"""System: You are a helpful assistant.
+                formatted_prompt = f"""System: You are a helpful assistant. Do it in a way that is easy to understand and follow. Make it short and concise.
 User: {prompt}
 Assistant:"""
 
